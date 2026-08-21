@@ -56,6 +56,7 @@
   }
   *{box-sizing:border-box}
   html{scroll-behavior:smooth}
+  body{overflow-anchor:none}   /* late-loading figures must not shift scroll */
   body{margin:0;background:
       radial-gradient(1100px 520px at 85% -10%, var(--glow-a), transparent 60%),
       radial-gradient(900px 500px at -10% 15%, var(--glow-b), transparent 55%),
@@ -700,27 +701,76 @@
   var home = document.getElementById('view-home');
   var detail = document.getElementById('view-detail');
 
+  var onDetail = false;   // is the detail view currently showing?
+  var homeY = 0;          // where the visitor was on the home page
+
+  // Move the scroll position with no animation. The explicit 'instant' behavior
+  // ignores the CSS scroll-behavior:smooth used for in-page nav links; the
+  // fallback re-applies it via style, flushing layout so it takes effect.
+  function scrollNow(y){
+    try { window.scrollTo({ top: y, left: 0, behavior: 'instant' }); } catch (e) {}
+    if (Math.abs((window.pageYOffset || 0) - y) > 1) {
+      var r = document.documentElement, prev = r.style.scrollBehavior;
+      r.style.scrollBehavior = 'auto';
+      void r.offsetHeight;                 // force the style change to apply
+      window.scrollTo(0, y);
+      r.style.scrollBehavior = prev;
+    }
+  }
+
   function route(){
     var h = location.hash || '';
     var m = h.match(/^#\/p\/([a-z0-9-]+)$/);
+
     if (m && PAGES[m[1]]) {
+      if (!onDetail) homeY = window.pageYOffset || 0;   // remember the spot to come back to
       detail.innerHTML = PAGES[m[1]];
       detail.classList.add('on');
       home.classList.add('off');
       document.title = TITLES[m[1]] + ' — Blake Belt';
-      window.scrollTo(0, 0);
+      scrollNow(0);                                    // start at the top, no animation
+      onDetail = true;
       return;
     }
+
+    var leavingDetail = onDetail;
     detail.classList.remove('on');
     detail.innerHTML = '';
     home.classList.remove('off');
     document.title = BASE_TITLE;
+    onDetail = false;
+
     if (h && h.length > 1 && h.charAt(1) !== '/') {
       var el = document.getElementById(h.slice(1));
-      if (el) { el.scrollIntoView(); return; }
+      if (el) {
+        if (leavingDetail) scrollNow(el.getBoundingClientRect().top + (window.pageYOffset || 0));
+        else el.scrollIntoView();
+        return;
+      }
     }
+    if (leavingDetail) scrollNow(homeY);                // back where you were
   }
+  // Project links are intercepted so the browser never starts its own smooth
+  // scroll-to-top animation before the router swaps in the detail view.
+  document.addEventListener('click', function(e){
+    var t = e.target, a = (t && t.closest) ? t.closest('a[href^="#/"]') : null;
+    if (!a || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+    e.preventDefault();
+    var href = a.getAttribute('href');
+    if (location.hash === href) route(); else location.hash = href;
+  });
   window.addEventListener('hashchange', route);
+
+  // A deep link lands before the figures have loaded; re-assert the top once
+  // they have, unless the visitor has already started moving the page.
+  var userMoved = false;
+  ['wheel','touchstart','keydown','mousedown'].forEach(function(ev){
+    window.addEventListener(ev, function(){ userMoved = true; }, { passive: true });
+  });
+  window.addEventListener('load', function(){
+    if (onDetail && !userMoved) scrollNow(0);
+  });
+
   route();
 
   // theme toggle
